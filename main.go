@@ -106,7 +106,8 @@ func ForvoSurf(han string) {
 	// go to search results page of word want
 	// TODO: error checking ; what if word doesn't exist?
 	// TODO: encode characters intelligently?
-	bow.Open("https://forvo.com/search/%E5%85%B3%E7%B3%BB/")
+	//bow.Open("https://forvo.com/search/%E5%85%B3%E7%B3%BB/")
+	bow.Open("https://forvo.com/search/" + han + "/")
 
 	// click first pronunciation link
 	bow.Click("a.word")
@@ -114,21 +115,51 @@ func ForvoSurf(han string) {
 	// find download URL
 	// TODO: all browsing through each pronunciation
 	// download into temp dir and play them back or something
-	//bow.Find("span[title*=Download]")
+	downloadLink := bow.Find("span[title*=Download]")
 
 	/*
+		data-p1: aHR0cHM6Ly9mb3J2by5jb20vZG93bmxvYWQvbXAzLyNAIy9AI0AvIyNAQA
+		data-p2: %E5%85%B3%E7%B3%BB
+		data-p3: zh
+		data-p4: 3778024
 
-	 */
+		url: https://forvo.com/download/mp3/{{data-p2}}/{{data-p3}}/{{data-p4}}
 
-	// Print page title
-	fmt.Println(bow.Title())
+	*/
+
+	// data-p1, etc. attributes and exists bool for err-checking
+	var (
+		p2     string
+		p3     string
+		p4     string
+		exists bool
+	)
+
+	p2, exists = downloadLink.Attr("data-p2")
+	if !exists {
+		fmt.Printf("data-p2 attribute doesn't exist, exiting")
+		os.Exit(1)
+	}
+	p3, exists = downloadLink.Attr("data-p3")
+	if !exists {
+		fmt.Printf("data-p2 attribute doesn't exist, exiting")
+		os.Exit(1)
+	}
+	p4, exists = downloadLink.Attr("data-p4")
+	if !exists {
+		fmt.Printf("data-p2 attribute doesn't exist, exiting")
+		os.Exit(1)
+	}
+
+	downloadUrl := "https://forvo.com/download/mp3/" + p2 + "/" + p3 + "/" + p4
 
 	// create file to write to
+	// e.g. 关系_12345.mp3
 	var file *os.File
-	file, err = os.Create("downloaded.mp3")
+	file, err = os.Create(han + "_" + p4 + ".mp3")
 
 	// open download url
-	bow.Open("https://forvo.com/download/mp3/关系/zh/3778024")
+	bow.Open(downloadUrl)
 
 	// write to file
 	bow.Download(file)
@@ -226,16 +257,18 @@ func main() {
 
 	var (
 		forvo = flag.Bool("forvo", false, "run ForvoSurf()")
-		cp    = flag.Bool("cp", false, "run ChinesePod()")
+		//cp    = flag.Bool("cp", false, "run ChinesePod()")
 	)
 	flag.Parse()
 
 	if *forvo {
 		ForvoSurf("关系")
 	}
-	if *cp {
-		ChinesePod("关系")
-	}
+	/*
+		if *cp {
+			ChinesePod("关系")
+		}
+	*/
 
 	//ChinesePod("关系")
 
