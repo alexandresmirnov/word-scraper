@@ -6,12 +6,12 @@ import (
 
 	"flag"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/gocolly/colly"
 	"github.com/julienschmidt/httprouter"
 
 	"github.com/ghodss/yaml"
@@ -109,7 +109,7 @@ func Forvo(han string) {
 	// go to search results page of word want
 	// TODO: error checking ; what if word doesn't exist?
 	// TODO: encode characters intelligently?
-	bow.Open("https://forvo.com/search/" + han + "/")
+	bow.Open(fmt.Sprintf("https://forvo.com/search/%s/", han))
 
 	// click first pronunciation link
 	bow.Click("a.word")
@@ -153,12 +153,12 @@ func Forvo(han string) {
 		os.Exit(1)
 	}
 
-	downloadUrl := "https://forvo.com/download/mp3/" + p2 + "/" + p3 + "/" + p4
+	downloadUrl := fmt.Sprintf("https://forvo.com/download/mp3/%s/%s/%s/", p2, p3, p4)
 
 	// create file to write to
 	// e.g. 关系_12345.mp3
 	var file *os.File
-	file, err = os.Create(han + "_" + p4 + ".mp3")
+	file, err = os.Create(fmt.Sprintf("%s_%s.mp3", han, p4))
 
 	// open download url
 	bow.Open(downloadUrl)
@@ -238,60 +238,79 @@ func Wiktionary(han string) Word {
 	word.Simplified = ""
 	word.Traditional = ""
 
-	// Instantiate default collector
-	c := colly.NewCollector(
-		// Visit only domains: dict.naver.com
-		colly.AllowedDomains("en.wiktionary.org"),
-	)
+	// create browser
+	bow := surf.NewBrowser()
+	err := bow.Open(fmt.Sprintf("https://en.wiktionary.org/wiki/%s", han))
+	check(err)
 
-	// If Simplified, follow link for traditional (for actual dict entry)
-	c.OnHTML("td span span[class='Hani'] a[href]", func(e *colly.HTMLElement) {
-		word.Traditional = e.Text
+	// get link to traditional definitions
+	traditionalLink := bow.Find("td span span[class='Hani'] a[href]")
+
+	// if something matches the above Find, need to navigate to traditional page
+	if traditionalLink.Length() > 0 {
+		// can set this safely since we know link text contains traditional
+		word.Traditional = traditionalLink.Text()
 
 		// can set Simplified because if we're in this branch, the param is simplified
 		word.Simplified = han
 
-		link := e.Request.AbsoluteURL(e.Attr("href"))
-		c.Visit(link)
-	})
+		// get link to traditional page
+		href, exists := traditionalLink.Attr("href")
 
-	// on encountering a proper article
-	c.OnHTML("#bodyContent", func(e *colly.HTMLElement) {
-		sel := e.DOM
-
-		if !strings.Contains(sel.Text(), "For pronunciation and definitions of") {
-			// find definitions list items, map each into a brief English definition
-			// place resultant slice into Word to return
-			word.Definitions = sel.Find("h3 ~ ol li").Map(func(i int, s *goquery.Selection) string {
-				// get english definition without below Chinese examples
-				return s.Contents().Not("dl").Text()
-			})
-
-			// noun, verb, etc.
-			// either h3 or h4, depending on if there are multiple pronunciations
-			var pos string
-
-			// either e.g. "Pronunciation 1" or e.g. "Noun"
-			headlineText := sel.Find("h3 span[class='mw-headline']").First().Text()
-
-			if strings.Contains(headlineText, "Pronunciation 1") {
-				pos = sel.Find("h4 span[class='mw-headline']").First().Text()
-			} else {
-				pos = sel.Find("h3 span[class='mw-headline']").Eq(1).Text()
-			}
-
-			word.POS = pos
+		// no href attribute means something's wrong
+		if !exists {
+			fmt.Printf("ERROR: no link to traditionl page")
+			os.Exit(1)
 		}
+
+		// get URL object from href
+		relUrl, err := url.Parse(href)
+		check(err)
+
+		// make potentially relative url into absolute
+		link := bow.ResolveUrl(relUrl).String()
+
+		// navigate to traditional page defs
+		bow.Open(link)
+
+	} else {
+		// param is traditional in this branch
+		word.Traditional = han
+	}
+
+	// at this point, we are for sure in the traditional defs page
+
+	// find content
+	content := bow.Find("#bodyContent")
+	if content.Length() == 0 {
+		fmt.Printf("ERROR: couldn't find body content")
+		os.Exit(1)
+	}
+
+	// find definitions list items, map each into a brief English definition
+	// place resultant slice into Word to return
+	word.Definitions = content.Find("h3 ~ ol li").Map(func(i int, s *goquery.Selection) string {
+		// get english definition without below Chinese examples
+		return s.Contents().Not("dl").Text()
 	})
 
-	// Before making a request print "Visiting ..."
-	c.OnRequest(func(r *colly.Request) {
-		fmt.Println("Visiting", r.URL.String())
-	})
+	// noun, verb, etc.
+	// either h3 or h4, depending on if there are multiple pronunciations
+	var pos string
 
-	// Start scraping on wiktionary
-	url := fmt.Sprintf("https://en.wiktionary.org/wiki/%s", han)
-	c.Visit(url)
+	// either e.g. "Pronunciation 1" or e.g. "Noun"
+	headlineText := content.Find("h3 span[class='mw-headline']").First().Text()
+
+	if strings.Contains(headlineText, "Pronunciation 1") {
+		pos = content.Find("h4 span[class='mw-headline']").First().Text()
+	} else {
+		pos = content.Find("h3 span[class='mw-headline']").Eq(1).Text()
+	}
+
+	word.POS = pos
+
+	spew.Dump(word)
+
 	return word
 }
 
@@ -308,6 +327,7 @@ func main() {
 	var (
 		forvo = flag.Bool("forvo", false, "run Forvo()")
 		cp    = flag.Bool("cp", false, "run ChinesePod()")
+		wi    = flag.Bool("wi", false, "run Wiktionary()")
 	)
 	flag.Parse()
 
@@ -316,6 +336,9 @@ func main() {
 	}
 	if *cp {
 		ChinesePod("关系")
+	}
+	if *wi {
+		Wiktionary("关系")
 	}
 
 	//ChinesePod("关系")
