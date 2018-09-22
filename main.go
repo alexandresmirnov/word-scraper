@@ -230,8 +230,6 @@ func ChinesePod(han string) {
 func Wiktionary(han string) Word {
 	//func Wiktionary(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 
-	fmt.Println("about to scrape Wiktionary")
-
 	// return value
 	var word Word
 	word.Definitions = make([]string, 0)
@@ -244,7 +242,11 @@ func Wiktionary(han string) Word {
 	check(err)
 
 	// get link to traditional definitions
-	traditionalLink := bow.Find("td span span[class='Hani'] a[href]")
+	traditionalLink := bow.
+		Find("td span span[class='Hani'] a[href]").
+		FilterFunction(func(i int, sel *goquery.Selection) bool {
+			return strings.Contains(sel.Parent().Text(), "For pronunciation")
+		})
 
 	// if something matches the above Find, need to navigate to traditional page
 	if traditionalLink.Length() > 0 {
@@ -278,6 +280,15 @@ func Wiktionary(han string) Word {
 		word.Traditional = han
 	}
 
+	/*
+		TODO: handle all three cases
+		1. Query is traditional (simplified is different)
+		2. Query is simplified (traditional is different)
+		3. Query is both (characters match)
+
+		atm, case 3 not handled
+	*/
+
 	// at this point, we are for sure in the traditional defs page
 
 	// find content
@@ -287,8 +298,13 @@ func Wiktionary(han string) Word {
 		os.Exit(1)
 	}
 
+	// find pinyin
+	// note that I'm just getting the first pronunciation atm (ignoring potential variants)
+	word.Pinyin = content.Find("span[class*='pinyin'] a").First().Text()
+
 	// find definitions list items, map each into a brief English definition
 	// place resultant slice into Word to return
+	// TODO: regex out countable/uncountable and classifier
 	word.Definitions = content.Find("h3 ~ ol li").Map(func(i int, s *goquery.Selection) string {
 		// get english definition without below Chinese examples
 		return s.Contents().Not("dl").Text()
@@ -338,7 +354,8 @@ func main() {
 		ChinesePod("关系")
 	}
 	if *wi {
-		Wiktionary("关系")
+		//Wiktionary("关系")
+		Wiktionary("知道")
 	}
 
 	//ChinesePod("关系")
