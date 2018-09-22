@@ -18,12 +18,13 @@ import (
 	"gopkg.in/headzoo/surf.v1"
 )
 
-func Index(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	fmt.Fprint(w, "Welcome!\n")
-}
+// constants
+const CONFIG_FILE = "config.yaml"
 
-func Hello(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	fmt.Fprintf(w, "hello, %s!\n", ps.ByName("name"))
+func check(err error) {
+	if err != nil {
+		panic(err)
+	}
 }
 
 type Credentials struct {
@@ -32,7 +33,27 @@ type Credentials struct {
 }
 
 type Config struct {
-	Forvo Credentials
+	Forvo      Credentials
+	ChinesePod Credentials
+}
+
+// Parse YAML file into Config
+func getConfigFromFile(filename string) Config {
+	configFileName := filename
+
+	raw, err := ioutil.ReadFile(configFileName)
+	check(err)
+
+	var config Config
+	err = yaml.Unmarshal([]byte(raw), &config)
+	check(err)
+
+	return config
+}
+
+// get config from CONFIG_FILE file
+func getConfig() Config {
+	return getConfigFromFile(CONFIG_FILE)
 }
 
 type Word struct {
@@ -56,32 +77,16 @@ func printWord(word Word) {
 	}
 }
 
-func ForvoSurf(han string) {
+func Forvo(han string) {
 	// create browser instance, open login page
 	bow := surf.NewBrowser()
 	err := bow.Open("https://forvo.com/login/")
-	if err != nil {
-		panic(err)
-	}
-
-	// Print page title
-	fmt.Println(bow.Title())
+	check(err)
 
 	// Log in to the site.
 
-	// read password/config from config.yaml
-	configFileName := "config.yaml"
-
-	raw, err := ioutil.ReadFile(configFileName)
-	if err != nil {
-		panic(err)
-	}
-
-	var config Config
-	err = yaml.Unmarshal([]byte(raw), &config)
-	if err != nil {
-		panic(err)
-	}
+	// read config file
+	config := getConfig()
 
 	// read forvo credentials
 	forvo := config.Forvo
@@ -99,14 +104,11 @@ func ForvoSurf(han string) {
 
 	// log in
 	err = loginForm.Submit()
-	if err != nil {
-		panic(err)
-	}
+	check(err)
 
 	// go to search results page of word want
 	// TODO: error checking ; what if word doesn't exist?
 	// TODO: encode characters intelligently?
-	//bow.Open("https://forvo.com/search/%E5%85%B3%E7%B3%BB/")
 	bow.Open("https://forvo.com/search/" + han + "/")
 
 	// click first pronunciation link
@@ -165,24 +167,64 @@ func ForvoSurf(han string) {
 	bow.Download(file)
 }
 
-/*
-	chinesepod:
+func ChinesePod(han string) {
+	// create browser instance, open login page
+	bow := surf.NewBrowser()
 	err := bow.Open("https://chinesepod.com/accounts/signin")
+	check(err)
 
 	// Log in to the site.
-	fm, _ := bow.Form("form#signInForm")
-	fm.Input("email", "email")
-	fm.Input("password", "password")
-	if fm.Submit() != nil {
-		panic(err)
+
+	// read password/config from config file
+	config := getConfig()
+
+	// read credentials
+	credentials := config.ChinesePod
+
+	email := credentials.Login
+	password := credentials.Password
+
+	// Create Form
+	loginForm, _ := bow.Form("form[action*=signin]")
+
+	loginForm.Input("email", email)
+	loginForm.Input("password", password)
+
+	// log in
+	err = loginForm.Submit()
+	check(err)
+
+	// go to search results page of word want
+	// TODO: error checking ; what if word doesn't exist?
+	// TODO: encode characters intelligently?
+	//bow.Open("https://forvo.com/search/%E5%85%B3%E7%B3%BB/")
+	err = bow.Open("https://chinesepod.com/tools/glossary/entry/" + han)
+	check(err)
+
+	// find download URL
+	// TODO: all browsing through each pronunciation
+	// download into temp dir and play them back or something
+	downloadLink := bow.Find("a[href*=redirect]")
+
+	downloadUrl, exists := downloadLink.Attr("href")
+	if !exists {
+		fmt.Println("no download link exists on ChinesePod")
+		os.Exit(1)
 	}
 
-	// go to search with param string
-	err = bow.Open("https://chinesepod.com/tools/glossary/entry/%E6%98%8E%E7%99%BD")
+	fmt.Println(downloadUrl)
 
-	bow.Open("https://chinesepod.com/redirect/?url=https%3A%2F%2Fs3.amazonaws.com%2Fchinesepod.com%2F0071%2F9ae5499ff3a114baa180e6d10c23d2c9e9233d9b%2Fmp3%2Fglossary%2Fsource%2Frec-1185523902796-3.mp3")
+	// create file to write to
+	// e.g. 关系_12345.mp3
+	var file *os.File
+	file, err = os.Create(han + "_chinesepod.mp3")
 
-*/
+	// open download url
+	bow.Open("https://chinesepod.com" + downloadUrl)
+
+	// write to file
+	bow.Download(file)
+}
 
 // scrape wiktionary for han, e.g. = 关系
 func Wiktionary(han string) Word {
@@ -253,22 +295,28 @@ func Wiktionary(han string) Word {
 	return word
 }
 
+func Index(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	fmt.Fprint(w, "Welcome!\n")
+}
+
+func Hello(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	fmt.Fprintf(w, "hello, %s!\n", ps.ByName("name"))
+}
+
 func main() {
 
 	var (
-		forvo = flag.Bool("forvo", false, "run ForvoSurf()")
-		//cp    = flag.Bool("cp", false, "run ChinesePod()")
+		forvo = flag.Bool("forvo", false, "run Forvo()")
+		cp    = flag.Bool("cp", false, "run ChinesePod()")
 	)
 	flag.Parse()
 
 	if *forvo {
-		ForvoSurf("关系")
+		Forvo("关系")
 	}
-	/*
-		if *cp {
-			ChinesePod("关系")
-		}
-	*/
+	if *cp {
+		ChinesePod("关系")
+	}
 
 	//ChinesePod("关系")
 
